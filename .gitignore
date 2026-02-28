@@ -1,0 +1,47 @@
+# 依赖
+node_modules/
+venv/
+__pycache__/
+*.pyc
+
+# 环境变量
+.env
+.env.local
+.env.production
+
+# 构建产物
+dist/
+.next/
+out/
+build/
+
+# 数据库和日志
+/data/*.db
+/data/*.db-shm
+/data/*.db-wal
+/data/*.jsonl
+/data/cache/
+/logs/*.log
+
+# 敏感配置
+/config/secrets.json
+
+# 系统文件
+.DS_Store
+*.swp
+*.swo
+*~
+
+# PM2
+.pm2/
+pids/
+*.pid
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# 测试
+coverage/
+.nyc_output/

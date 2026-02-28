@@ -1,0 +1,410 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import AssetDistributionChart from '../components/AssetDistributionChart';
+import TrendChart from '../components/TrendChart';
+import StockDistributionChart from '../components/StockDistributionChart';
+import CryptoDistributionChart from '../components/CryptoDistributionChart';
+import ChainDistributionChart from '../components/ChainDistributionChart';
+
+interface AssetSnapshot {
+  timestamp: number;
+  date: string;
+  stocks: {
+    positions: Array<{
+      code: string;
+      stock_name: string;
+      qty: number;
+      market_val: number;
+      pl_val: number;
+      pl_ratio: number;
+    }>;
+    totalValue: number;
+  };
+  funds: {
+    cash: number;
+    fundAssets: number;
+  };
+  total: number;
+}
+
+interface CryptoPosition {
+  symbol: string;
+  amount: number;
+  value_usd: number;
+  price: number;
+  exchange: string;
+  type: string;
+}
+
+interface ChainAsset {
+  chain: string;
+  symbol: string;
+  balance: number;
+  value_usd: number;
+  price: number;
+  address?: string;
+}
+
+export default function DashboardPage() {
+  const [snapshot, setSnapshot] = useState<AssetSnapshot | null>(null);
+  const [cryptoPositions, setCryptoPositions] = useState<CryptoPosition[]>([]);
+  const [chainAssets, setChainAssets] = useState<ChainAsset[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchAllData();
+    // 每30秒刷新一次
+    const interval = setInterval(fetchAllData, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const fetchAllData = async () => {
+    try {
+      const [snapshotRes, cryptoRes, chainRes] = await Promise.all([
+        fetch('http://localhost:3001/api/assets/snapshot'),
+        fetch('http://localhost:3001/api/crypto'),
+        fetch('http://localhost:3001/api/chain'),
+      ]);
+
+      if (snapshotRes.ok) {
+        const data = await snapshotRes.json();
+        setSnapshot(data);
+      }
+
+      if (cryptoRes.ok) {
+        const data = await cryptoRes.json();
+        setCryptoPositions(data);
+      }
+
+      if (chainRes.ok) {
+        const data = await chainRes.json();
+        setChainAssets(data);
+      }
+
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-950">
+        <div className="text-white">Loading...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-950">
+        <div className="text-red-400">
+          Error: {error}
+          <br />
+          <span className="text-sm text-gray-500">
+            请确保后端服务已启动（Port 3001）
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  const cryptoTotal = cryptoPositions.reduce((sum, p) => sum + p.value_usd, 0);
+  const chainTotal = chainAssets.reduce((sum, a) => sum + a.value_usd, 0);
+  const grandTotal = (snapshot?.total || 0) + cryptoTotal + chainTotal;
+
+  return (
+    <div className="min-h-screen bg-gray-950 p-8">
+      <div className="mx-auto max-w-7xl">
+        {/* Header */}
+        <div className="mb-8 flex items-end justify-between border-b border-gray-800 pb-6">
+          <div>
+            <h1 className="text-3xl font-bold text-white">Wealth Dashboard V2</h1>
+            <p className="mt-1 text-sm text-gray-500">
+              <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500 mr-2"></span>
+              {new Date().toLocaleString()}
+            </p>
+          </div>
+          <div className="text-right">
+            <div className="text-xs font-medium uppercase tracking-wider text-gray-500">
+              Total Net Worth
+            </div>
+            <div className="text-4xl font-bold bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">
+              ${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+        </div>
+
+        {/* Charts Section */}
+        <div className="mb-8 grid gap-6 lg:grid-cols-2">
+          {/* Asset Distribution Pie Chart */}
+          <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+            <div className="mb-4 font-semibold text-gray-200">
+              Asset Distribution
+            </div>
+            <AssetDistributionChart />
+          </div>
+
+          {/* Trend Line Chart */}
+          <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+            <div className="mb-4 font-semibold text-gray-200">
+              Portfolio Trend
+            </div>
+            <TrendChart />
+          </div>
+        </div>
+
+        {/* Detailed Distribution Charts */}
+        <div className="mb-8 grid gap-6 md:grid-cols-3">
+          {/* Stock Distribution */}
+          <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+            <div className="mb-4 font-semibold text-gray-200 flex items-center gap-2">
+              <span className="text-blue-400">📈</span>
+              Stock Distribution
+            </div>
+            <StockDistributionChart />
+          </div>
+
+          {/* Crypto Distribution */}
+          <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+            <div className="mb-4 font-semibold text-gray-200 flex items-center gap-2">
+              <span className="text-yellow-400">🪙</span>
+              Crypto Distribution
+            </div>
+            <CryptoDistributionChart />
+          </div>
+
+          {/* Chain Distribution */}
+          <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+            <div className="mb-4 font-semibold text-gray-200 flex items-center gap-2">
+              <span className="text-pink-400">⛓️</span>
+              Chain Distribution
+            </div>
+            <ChainDistributionChart />
+          </div>
+        </div>
+
+        {/* KPI Cards */}
+        <div className="mb-8 grid gap-4 md:grid-cols-5">
+          <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+            <div className="text-xs font-medium uppercase tracking-wider text-gray-500">
+              Stocks
+            </div>
+            <div className="mt-2 text-2xl font-bold text-blue-400">
+              ${snapshot?.stocks.totalValue.toLocaleString() || '0'}
+            </div>
+            <div className="mt-1 text-xs text-gray-600">
+              {snapshot?.stocks.positions.length || 0} positions
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+            <div className="text-xs font-medium uppercase tracking-wider text-gray-500">
+              Cash
+            </div>
+            <div className="mt-2 text-2xl font-bold text-emerald-400">
+              ${snapshot?.funds.cash.toLocaleString() || '0'}
+            </div>
+            <div className="mt-1 text-xs text-gray-600">
+              Available
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+            <div className="text-xs font-medium uppercase tracking-wider text-gray-500">
+              Crypto
+            </div>
+            <div className="mt-2 text-2xl font-bold text-yellow-400">
+              ${cryptoTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div className="mt-1 text-xs text-gray-600">
+              {cryptoPositions.length} positions
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+            <div className="text-xs font-medium uppercase tracking-wider text-gray-500">
+              Chain
+            </div>
+            <div className="mt-2 text-2xl font-bold text-pink-400">
+              ${chainTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div className="mt-1 text-xs text-gray-600">
+              {chainAssets.length} balances
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+            <div className="text-xs font-medium uppercase tracking-wider text-gray-500">
+              Funds
+            </div>
+            <div className="mt-2 text-2xl font-bold text-purple-400">
+              ${snapshot?.funds.fundAssets.toLocaleString() || '0'}
+            </div>
+            <div className="mt-1 text-xs text-gray-600">
+              Managed
+            </div>
+          </div>
+        </div>
+
+        {/* Stocks Table */}
+        {snapshot && snapshot.stocks.positions.length > 0 && (
+          <div className="mb-8 rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden">
+            <div className="border-b border-gray-800 px-6 py-4 font-semibold text-gray-200">
+              Stock Positions
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-800/50 text-xs uppercase text-gray-500">
+                  <tr>
+                    <th className="py-3 px-4 text-left">Code</th>
+                    <th className="py-3 px-4 text-left">Name</th>
+                    <th className="py-3 px-4 text-right">Qty</th>
+                    <th className="py-3 px-4 text-right">Value</th>
+                    <th className="py-3 px-4 text-right">P/L</th>
+                    <th className="py-3 px-4 text-right">P/L %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {snapshot.stocks.positions.map((position) => (
+                    <tr
+                      key={position.code}
+                      className="border-b border-gray-800/50 transition hover:bg-gray-800/50"
+                    >
+                      <td className="py-3 px-4 font-mono text-blue-300">
+                        {position.code}
+                      </td>
+                      <td className="py-3 px-4 text-gray-300">
+                        {position.stock_name}
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono text-gray-400">
+                        {position.qty}
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono font-bold text-white">
+                        ${position.market_val.toLocaleString()}
+                      </td>
+                      <td
+                        className={`py-3 px-4 text-right font-mono ${
+                          position.pl_val >= 0 ? 'text-green-400' : 'text-red-400'
+                        }`}
+                      >
+                        ${position.pl_val.toLocaleString()}
+                      </td>
+                      <td
+                        className={`py-3 px-4 text-right font-mono ${
+                          position.pl_ratio >= 0 ? 'text-green-400' : 'text-red-400'
+                        }`}
+                      >
+                        {position.pl_ratio.toFixed(2)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Crypto Table */}
+        {cryptoPositions.length > 0 && (
+          <div className="mb-8 rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden">
+            <div className="border-b border-gray-800 px-6 py-4 font-semibold text-gray-200">
+              Crypto Positions
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-800/50 text-xs uppercase text-gray-500">
+                  <tr>
+                    <th className="py-3 px-4 text-left">Symbol</th>
+                    <th className="py-3 px-4 text-left">Exchange</th>
+                    <th className="py-3 px-4 text-left">Type</th>
+                    <th className="py-3 px-4 text-right">Amount</th>
+                    <th className="py-3 px-4 text-right">Price</th>
+                    <th className="py-3 px-4 text-right">Value (USD)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cryptoPositions.map((position, idx) => (
+                    <tr
+                      key={`${position.exchange}-${position.symbol}-${idx}`}
+                      className="border-b border-gray-800/50 transition hover:bg-gray-800/50"
+                    >
+                      <td className="py-3 px-4 font-mono text-yellow-300">
+                        {position.symbol}
+                      </td>
+                      <td className="py-3 px-4 text-gray-400">
+                        {position.exchange}
+                      </td>
+                      <td className="py-3 px-4 text-gray-400 capitalize">
+                        {position.type}
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono text-gray-400">
+                        {position.amount.toFixed(4)}
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono text-gray-400">
+                        ${position.price.toFixed(2)}
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono font-bold text-white">
+                        ${position.value_usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Chain Assets Table */}
+        {chainAssets.length > 0 && (
+          <div className="mb-8 rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden">
+            <div className="border-b border-gray-800 px-6 py-4 font-semibold text-gray-200">
+              Chain Assets
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-800/50 text-xs uppercase text-gray-500">
+                  <tr>
+                    <th className="py-3 px-4 text-left">Chain</th>
+                    <th className="py-3 px-4 text-left">Symbol</th>
+                    <th className="py-3 px-4 text-right">Balance</th>
+                    <th className="py-3 px-4 text-right">Price</th>
+                    <th className="py-3 px-4 text-right">Value (USD)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {chainAssets.map((asset, idx) => (
+                    <tr
+                      key={`${asset.chain}-${asset.symbol}-${idx}`}
+                      className="border-b border-gray-800/50 transition hover:bg-gray-800/50"
+                    >
+                      <td className="py-3 px-4 text-pink-300">
+                        {asset.chain}
+                      </td>
+                      <td className="py-3 px-4 font-mono text-gray-400">
+                        {asset.symbol}
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono text-gray-400">
+                        {asset.balance.toFixed(4)}
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono text-gray-400">
+                        ${asset.price.toFixed(2)}
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono font-bold text-white">
+                        ${asset.value_usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

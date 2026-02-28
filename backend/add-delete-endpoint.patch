@@ -1,0 +1,31 @@
+--- a/src/snapshot/history.controller.ts
++++ b/src/snapshot/history.controller.ts
+@@ -1,4 +1,4 @@
+-import { Controller, Get, Logger, Post, Query } from '@nestjs/common';
++import { Controller, Delete, Get, Logger, Post, Query } from '@nestjs/common';
+ import { SnapshotService } from './snapshot.service';
+ import { DEFAULT_DOMESTIC_USD, calculateSnapshotBuckets } from './snapshot-buckets';
+ import { mergeSnapshotWithFallback } from './snapshot-integrity';
+@@ -453,4 +453,21 @@ export class HistoryController {
+       };
+     }
+   }
++
++  /**
++   * 删除指定日期的快照
++   * DELETE /api/history/snapshot?date=2026-02-15
++   */
++  @Delete('snapshot')
++  async deleteSnapshotByDate(@Query('date') dateStr: string) {
++    try {
++      const targetDate = new Date(dateStr);
++      const count = await this.snapshotService.deleteByDate(targetDate);
++      return { success: true, deleted: count };
++    } catch (error) {
++      return {
++        success: false,
++        error: error instanceof Error ? error.message : 'Unknown error',
++      };
++    }
++  }
+ }
