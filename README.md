@@ -1,16 +1,16 @@
 # 💰 WealthLens
 
-A comprehensive **real-time wealth tracking dashboard** for:
-- 📈 **Stocks** (US/HK via Futu)
-- 💎 **Crypto** (CEX: OKX, Binance, Hyperliquid + DEX: On-chain wallets)
-- 💵 **Cash & Others** (Manual entries)
+A multi-broker **wealth aggregation tool** with three interfaces:
 
-**Live Demo Features:**
-- Real-time asset aggregation from multiple sources
-- Historical snapshots every 6 hours
-- Beautiful charts & analytics
-- Comparison view (day/week/month)
-- Mobile-responsive UI
+🖥️ **GUI** — Next.js dashboard for visual overview
+⌨️ **CLI/TUI** — Terminal dashboard for quick checks
+💬 **Chat** — AI-powered queries via Telegram/OpenClaw
+
+### Supported Data Sources
+- 📈 **Stocks**: Futu (HK/US) + Interactive Brokers (US)
+- 💎 **Crypto**: OKX, Binance, Bitget + on-chain wallets
+- 💱 **FX Rates**: Multi-source with smart caching (currencyapi → exchangerate-api → open.er-api)
+- 📊 **Historical**: SQLite snapshots with data integrity checks
 
 ---
 
@@ -38,7 +38,9 @@ A comprehensive **real-time wealth tracking dashboard** for:
 ### Tech Stack
 - **Backend**: NestJS + TypeScript + TypeORM + SQLite
 - **Frontend**: Next.js 15 + React 19 + TailwindCSS + Recharts
+- **TUI**: Python (zero dependencies)
 - **Futu Service**: Python + Futu OpenD
+- **IBKR Service**: Python + IB Gateway
 - **Process Manager**: PM2 for zero-downtime
 
 ---
@@ -84,9 +86,47 @@ npm install -g pm2
 pm2 start ecosystem.config.js
 ```
 
-### 4. Open Dashboard
+### 4. Use It
 
-Visit: **http://localhost:3000/dashboard**
+**GUI** — Open in browser:
+```bash
+open http://localhost:3000/dashboard
+```
+
+**CLI/TUI** — Quick terminal check:
+```bash
+# One-shot view
+python3 tui.py
+
+# Auto-refresh every 60s
+python3 tui.py --watch
+
+# Custom interval
+python3 tui.py --watch --interval 30
+```
+
+**Chat via OpenClaw** — Talk to your portfolio:
+
+WealthLens works as an [OpenClaw](https://github.com/openclaw/openclaw) agent backend.
+Once the API server is running, your AI assistant can query portfolio data conversationally:
+
+```
+You:  看板
+Bot:  💰 WealthLens Dashboard
+      总资产 $335,893 (¥2,305,283)
+      ── 股票 ──────────────
+        NVIDIA       $ 37,074  +$42,326
+        ...
+
+You:  我的加密资产有多少？
+Bot:  OKX $36,122 | Binance $7,498 | Bitget $872
+      加密总资产: $44,492
+
+You:  汇率多少？
+Bot:  USD/CNY 6.8582 (来源: currencyapi.com)
+```
+
+No special integration needed — any AI agent that can call HTTP APIs can use WealthLens as a data backend.
 
 ---
 
@@ -101,32 +141,30 @@ Visit: **http://localhost:3000/dashboard**
 ## 🏗️ Architecture
 
 ```
-┌─────────────┐
-│   Browser   │
-└──────┬──────┘
-       │ HTTP
-       ▼
-┌─────────────┐     ┌──────────────┐
-│  Next.js    │────▶│   NestJS     │
-│  Frontend   │     │   Backend    │
-│ :3000       │     │   :3001      │
-└─────────────┘     └──────┬───────┘
-                           │
-                ┌──────────┼──────────┐
-                │          │          │
-                ▼          ▼          ▼
-          ┌─────────┐ ┌───────┐ ┌─────────┐
-          │  Futu   │ │  OKX  │ │ Binance │
-          │ Service │ │  API  │ │   API   │
-          │ :11112  │ │       │ │         │
-          └─────────┘ └───────┘ └─────────┘
-                │
-                ▼
-          ┌──────────┐
-          │  Futu    │
-          │  OpenD   │
-          │  :11111  │
-          └──────────┘
+┌──────────┐  ┌──────────┐  ┌──────────┐
+│ Browser  │  │ CLI/TUI  │  │ OpenClaw │
+│ :3000    │  │ tui.py   │  │ Telegram │
+└────┬─────┘  └────┬─────┘  └────┬─────┘
+     │             │              │
+     └─────────────┼──────────────┘
+                   │ HTTP
+                   ▼
+            ┌──────────────┐
+            │   NestJS     │
+            │   Backend    │
+            │   :3001      │
+            └──────┬───────┘
+                   │
+     ┌─────────┬───┴───┬──────────┐
+     │         │       │          │
+     ▼         ▼       ▼          ▼
+┌─────────┐ ┌──────┐ ┌────────┐ ┌───────┐
+│  Futu   │ │ IBKR │ │ Crypto │ │  FX   │
+│ :8000   │ │ :8001│ │ (ccxt) │ │ Rates │
+└─────────┘ └──────┘ └────────┘ └───────┘
+     │         │         │
+     ▼         ▼         ▼
+  Futu OpenD  IB GW   OKX/BN/BG
 ```
 
 ---
