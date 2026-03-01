@@ -16,7 +16,7 @@ export class RatesService {
   private readonly logger = new Logger(RatesService.name);
   private cachedRates: ExchangeRates | null = null;
   private lastFetchTime = 0;
-  private readonly CACHE_TTL = 5 * 60 * 1000;
+  private readonly CACHE_TTL = 60 * 60 * 1000; // 1 hour;
 
   async getRates(): Promise<ExchangeRates> {
     const now = Date.now();
