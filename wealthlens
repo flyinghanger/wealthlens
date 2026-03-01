@@ -266,7 +266,17 @@ def render(futu_positions, futu_cash, ibkr_net, crypto, cny_rate, mode="api", ib
     print(f"  总盈亏    {pnl_fmt(total_pnl)}")
     print(f"  (加密盈亏自 2026-03-01 起算)")
 
-    print(f"\n  汇率: USD/CNY {cny_rate:.4f}")
+    # 汇率缓存时间
+    rate_age = ""
+    try:
+        import os as _os
+        rc = _os.path.join(_os.path.dirname(_os.path.realpath(__file__)), "data", "rates-cache.json")
+        if _os.path.exists(rc):
+            rc_data = json.load(open(rc))
+            age_h = (time.time() * 1000 - rc_data.get("updated_at", 0)) / 3600000
+            rate_age = f"  ({age_h:.1f}h ago, 8h TTL)"
+    except Exception: pass
+    print(f"\n  汇率: USD/CNY {cny_rate:.4f}{rate_age}")
     print("=" * W)
 
 def main():
