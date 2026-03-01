@@ -314,7 +314,7 @@ def main():
 
             if not args.direct and mode in ("api", "cache"):
                 futu_positions = [p for p in snap.get("stocks",{}).get("positions",[]) if p.get("source")=="futu"]
-                ibkr_positions = [p for p in snap.get("stocks",{}).get("positions",[]) if p.get("source")=="ibkr"] if mode == "cache" else ibkr_positions
+                ibkr_positions = [p for p in snap.get("stocks",{}).get("positions",[]) if p.get("source")=="ibkr"]
                 ibkr_net = snap.get("funds",{}).get("ibkr_net_liquidation", 0)
                 futu_cash = snap.get("funds",{}).get("cash_usd",0) - snap.get("funds",{}).get("ibkr_cash_usd",0)
                 cny_rate = snap.get("rates",{}).get("usd_to_cny", cny_rate)
