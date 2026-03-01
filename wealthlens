@@ -176,7 +176,7 @@ def fetch_bitget(secrets):
     return positions
 
 # ── 渲染 ──
-def render(futu_positions, futu_cash, ibkr_net, crypto, cny_rate, mode="api"):
+def render(futu_positions, futu_cash, ibkr_net, crypto, cny_rate, mode="api", ibkr_positions=None):
     # Futu 直连返回的是 HKD，需要转 USD
     _, hkd_to_usd = get_rates()
     for p in (futu_positions or []):
@@ -233,6 +233,18 @@ def render(futu_positions, futu_cash, ibkr_net, crypto, cny_rate, mode="api"):
             coins = " ".join(f"{p['symbol']}${p['value_usd']:,.0f}" for p in items if p["value_usd"] >= 1)
             print(f"  {ex:<8} {fmt_usd(total)}  {coins}")
 
+    # 盈亏汇总
+    futu_pnl = sum(p.get("pl_val_usd", 0) or p.get("pl_val", 0) for p in (futu_positions or []))
+    ibkr_pnl = sum(p.get("pl_val_usd", 0) for p in (ibkr_positions or []))
+    total_pnl = futu_pnl + ibkr_pnl
+    def pnl_fmt(v):
+        s = f"+${v:,.0f}" if v >= 0 else f"-${abs(v):,.0f}"
+        return f"\033[32m{s}\033[0m" if v >= 0 else f"\033[31m{s}\033[0m"
+    print(f"\n  ── 📊 盈亏 ──")
+    if futu_pnl: print(f"  Futu      {pnl_fmt(futu_pnl)}")
+    if ibkr_pnl: print(f"  IBKR      {pnl_fmt(ibkr_pnl)}")
+    print(f"  总盈亏    {pnl_fmt(total_pnl)}")
+
     print(f"\n  汇率: USD/CNY {cny_rate:.4f}")
     print("=" * W)
 
@@ -258,6 +270,7 @@ def main():
                 futu_cash = snap.get("funds",{}).get("cash_usd",0) - snap.get("funds",{}).get("ibkr_cash_usd",0)
                 cny_rate = snap.get("rates",{}).get("usd_to_cny", cny_rate)
                 crypto = crypto_data or []
+                ibkr_positions = [p for p in snap.get("stocks",{}).get("positions",[]) if p.get("source")=="ibkr"]
                 mode = "api"
             except Exception:
                 print("  ⚠️  Backend 未运行，切换到直连模式...")
@@ -286,8 +299,9 @@ def main():
             except Exception: pass
             mode = "direct"
 
+        ibkr_positions = locals().get('ibkr_positions', [])
         if args.watch: clear()
-        render(futu_positions, futu_cash, ibkr_net, crypto, cny_rate, mode)
+        render(futu_positions, futu_cash, ibkr_net, crypto, cny_rate, mode, ibkr_positions)
         if not args.watch: break
         time.sleep(args.interval)
 
