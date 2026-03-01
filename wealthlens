@@ -264,6 +264,7 @@ def render(futu_positions, futu_cash, ibkr_net, crypto, cny_rate, mode="api", ib
     if futu_pnl: print(f"  Futu      {pnl_fmt(futu_pnl)}")
     if ibkr_pnl: print(f"  IBKR      {pnl_fmt(ibkr_pnl)}")
     print(f"  总盈亏    {pnl_fmt(total_pnl)}")
+    print(f"  (加密盈亏自 2026-03-01 起算)")
 
     print(f"\n  汇率: USD/CNY {cny_rate:.4f}")
     print("=" * W)
