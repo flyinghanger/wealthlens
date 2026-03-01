@@ -16,7 +16,7 @@ IB_HOST = os.getenv("IB_HOST", "127.0.0.1")
 IB_PORT = int(os.getenv("IB_PORT", "4001"))
 IB_CLIENT_ID = int(os.getenv("IB_CLIENT_ID", "10"))
 
-ib = None  # 全局持久连接
+ib = None
 
 def to_number(value, default=0.0):
     try:
@@ -31,18 +31,18 @@ async def ensure_connected():
         return ib
     ib = IB()
     await ib.connectAsync(IB_HOST, IB_PORT, clientId=IB_CLIENT_ID, timeout=15)
-    logger.info(f"Connected to IB Gateway, accounts: {ib.managedAccounts()}")
+    acct = ib.managedAccounts()[0]
+    # 订阅 account updates，获取 portfolio（带市场价和盈亏）
+    await ib.reqAccountUpdatesAsync(acct)
+    logger.info(f"Connected to IB Gateway, account: {acct}")
+    await asyncio.sleep(3)  # 等 portfolio 数据到达
+    logger.info(f"Portfolio loaded: {len(ib.portfolio())} items")
     return ib
 
 @asynccontextmanager
 async def lifespan(app):
-    # 启动时连接
-    try:
-        await ensure_connected()
-    except Exception as e:
-        logger.warning(f"Initial IB connection failed: {e}")
+    # 延迟连接到第一次请求，避免阻塞 startup
     yield
-    # 关闭时断开
     global ib
     if ib and ib.isConnected():
         ib.disconnect()
@@ -95,35 +95,37 @@ async def get_funds():
 async def get_positions():
     try:
         conn = await ensure_connected()
-        positions = await asyncio.wait_for(conn.reqPositionsAsync(), timeout=60)
+        portfolio = conn.portfolio()
 
         result = []
-        for pos in positions:
-            contract = pos.contract
-            qty = to_number(pos.position)
-            avg_cost = to_number(pos.avgCost)
+        for p in portfolio:
+            c = p.contract
+            qty = to_number(p.position)
             if qty == 0:
                 continue
 
-            market_val = abs(qty * avg_cost)
+            market_val = abs(to_number(p.marketValue))
+            market_price = to_number(p.marketPrice)
+            avg_cost = to_number(p.averageCost)
+            pnl = to_number(p.unrealizedPNL)
+
             result.append({
-                "code": contract.symbol,
-                "stock_name": contract.localSymbol or contract.symbol,
+                "code": c.symbol,
+                "stock_name": c.localSymbol or c.symbol,
                 "qty": qty,
                 "cost_price": avg_cost,
-                "nominal_price": avg_cost,
+                "nominal_price": market_price,
                 "market_val": market_val,
                 "market_val_usd": market_val,
-                "pl_val": 0,
-                "pl_val_usd": 0,
-                "currency": contract.currency or "USD",
+                "pl_val": pnl,
+                "pl_val_usd": pnl,
+                "pl_ratio": (pnl / (abs(qty) * avg_cost) * 100) if avg_cost else 0,
+                "currency": c.currency or "USD",
                 "source": "ibkr",
             })
 
         logger.info(f"Positions: {len(result)} holdings")
         return {"positions": result, "count": len(result)}
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="Timeout")
     except Exception as e:
         logger.error(f"positions error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
