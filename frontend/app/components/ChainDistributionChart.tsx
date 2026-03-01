@@ -30,8 +30,8 @@ export default function ChainDistributionChart() {
 
   useEffect(() => {
     fetchChainData();
-    const interval = setInterval(fetchChainData, 5 * 60 * 1000); // 5分钟
-    return () => clearInterval(interval);
+    // 按需获取，不轮询
+    // return () => {};
   }, []);
 
   const fetchChainData = async () => {
