@@ -371,10 +371,10 @@ export default function DashboardPage() {
     };
 
     bootstrap();
-    // const interval = setInterval(fetchAllData, 30000); // 按需获取，不轮询
+    const interval = setInterval(fetchAllData, 60000); // 1分钟刷新
     return () => {
       mounted = false;
-      // clearInterval(interval);
+      clearInterval(interval);
     };
   }, []);
 
