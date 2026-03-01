@@ -1,0 +1,289 @@
+#!/usr/bin/env python3
+"""
+WealthLens CLI — 资产看板
+
+用法:
+  wealthlens                # 一次性查看（优先走 backend API，失败则直连交易所）
+  wealthlens --watch        # 持续刷新
+  wealthlens --interval 30  # 自定义刷新间隔
+  wealthlens --direct       # 强制直连交易所（不依赖 backend）
+"""
+import sys, os, json, time, hmac, hashlib, base64, argparse, subprocess
+from datetime import datetime, timezone
+from urllib import request, parse
+
+PROJ = os.path.dirname(os.path.realpath(__file__))
+SECRETS_FILE = os.path.join(PROJ, "config", "secrets.json")
+RATES_CACHE = os.path.join(PROJ, "data", "rates-cache.json")
+API = "http://localhost:3001"
+
+def http_get(url, headers=None, timeout=10):
+    """HTTP GET — 优先 curl（代理友好），回退 urllib"""
+    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY") or os.environ.get("ALL_PROXY") or ""
+    # 外部请求走 curl（urllib 对 HTTPS 代理支持差）
+    if proxy and not url.startswith("http://localhost") and not url.startswith("http://127.0.0.1"):
+        cmd = ["curl", "-s", "--max-time", str(timeout), "-x", proxy]
+        for k, v in (headers or {}).items():
+            cmd.extend(["-H", f"{k}: {v}"])
+        cmd.append(url)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout+5)
+        if r.returncode == 0 and r.stdout.strip():
+            return json.loads(r.stdout)
+        raise Exception(f"curl failed: {r.stderr[:200]}")
+    # 本地请求走 urllib
+    req = request.Request(url, headers=headers or {})
+    with request.urlopen(req, timeout=timeout) as r:
+        return json.load(r)
+
+def fmt_usd(v): return f"${v:>12,.0f}"
+def fmt_cny(v): return f"¥{v:>12,.0f}"
+def clear(): print("\033[2J\033[H", end="")
+
+# ── 汇率 ──
+def get_rates():
+    # 1. 磁盘缓存 (24h内可用)
+    try:
+        if os.path.exists(RATES_CACHE):
+            data = json.load(open(RATES_CACHE))
+            age_h = (time.time() * 1000 - data.get("updated_at", 0)) / 3600000
+            if age_h < 24:
+                return data["usd_to_cny"], data.get("hkd_to_usd", 0.1285)
+    except Exception: pass
+    # 2. open.er-api (免费, 无key)
+    try:
+        data = http_get("https://open.er-api.com/v6/latest/USD", timeout=5)
+        rates = data.get("rates", {})
+        cny, hkd = float(rates.get("CNY", 0)), float(rates.get("HKD", 0))
+        if cny and hkd:
+            cache = {"usd_to_cny": cny, "hkd_to_usd": 1/hkd, "updated_at": int(time.time()*1000), "source": "open.er-api.com"}
+            os.makedirs(os.path.dirname(RATES_CACHE), exist_ok=True)
+            with open(RATES_CACHE, "w") as f: json.dump(cache, f)
+            return cny, 1/hkd
+    except Exception: pass
+    return 7.25, 0.1285
+
+# ── OKX ──
+def _okx_sign(secret, ts, method, path):
+    s = f"{ts}{method}{path}"
+    return base64.b64encode(hmac.new(secret.encode(), s.encode(), hashlib.sha256).digest()).decode()
+
+def fetch_okx(secrets):
+    cfg = secrets.get("okx", {})
+    key, sec, pw = cfg.get("apiKey",""), cfg.get("secret",""), cfg.get("password","")
+    if not key: return []
+    positions = []
+    for path in ["/api/v5/asset/balances", "/api/v5/finance/savings/balance", "/api/v5/account/balance"]:
+        try:
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            sig = _okx_sign(sec, ts, "GET", path)
+            headers = {"OK-ACCESS-KEY": key, "OK-ACCESS-SIGN": sig, "OK-ACCESS-TIMESTAMP": ts, "OK-ACCESS-PASSPHRASE": pw}
+            data = http_get(f"https://www.okx.com{path}", headers=headers, timeout=10)
+            items = data.get("data", [])
+            if path == "/api/v5/account/balance":
+                items = [d for acct in items for d in acct.get("details", [])]
+            for item in items:
+                bal = float(item.get("bal", 0) or item.get("amt", 0) or item.get("eq", 0))
+                if bal <= 0: continue
+                ccy = item.get("ccy", "")
+                if ccy in ("USDT","USDC"): price = 1.0
+                else:
+                    try:
+                        tk = http_get(f"https://www.okx.com/api/v5/market/ticker?instId={ccy}-USDT", timeout=5)
+                        price = float(tk["data"][0]["last"])
+                    except Exception: price = 0
+                atype = "funding" if "asset" in path else ("earn" if "savings" in path else "trading")
+                positions.append({"symbol": ccy, "amount": bal, "value_usd": bal*price, "price": price, "exchange": "OKX", "type": atype})
+        except Exception: pass
+    return positions
+
+# ── Binance ──
+def fetch_binance(secrets):
+    cfg = secrets.get("binance", {})
+    key, sec = cfg.get("apiKey",""), cfg.get("secret","")
+    if not key: return []
+    def signed_get(path, params=None):
+        params = params or {}
+        params["timestamp"] = str(int(time.time()*1000))
+        qs = parse.urlencode(params)
+        sig = hmac.new(sec.encode(), qs.encode(), hashlib.sha256).hexdigest()
+        return http_get(f"https://api.binance.com{path}?{qs}&signature={sig}", headers={"X-MBX-APIKEY": key}, timeout=10)
+    positions = []
+    # Spot
+    try:
+        data = signed_get("/api/v3/account")
+        for b in data.get("balances", []):
+            free = float(b["free"]) + float(b["locked"])
+            if free <= 0: continue
+            ccy = b["asset"]
+            if ccy in ("USDT","USDC","BUSD","FDUSD"): price = 1.0
+            else:
+                try:
+                    tk = http_get(f"https://api.binance.com/api/v3/ticker/price?symbol={ccy}USDT", timeout=5)
+                    price = float(tk["price"])
+                except Exception: price = 0
+            positions.append({"symbol": ccy, "amount": free, "value_usd": free*price, "price": price, "exchange": "Binance", "type": "spot"})
+    except Exception: pass
+    # Earn
+    try:
+        data = signed_get("/sapi/v1/simple-earn/flexible/position", {"size": "100"})
+        for row in data.get("rows", []):
+            amt = float(row.get("totalAmount", 0))
+            if amt <= 0: continue
+            ccy = row.get("asset", "")
+            if ccy in ("USDT","USDC"): price = 1.0
+            else:
+                try:
+                    tk = http_get(f"https://api.binance.com/api/v3/ticker/price?symbol={ccy}USDT", timeout=5)
+                    price = float(tk["price"])
+                except Exception: price = 0
+            positions.append({"symbol": ccy, "amount": amt, "value_usd": amt*price, "price": price, "exchange": "Binance", "type": "earn"})
+    except Exception: pass
+    return positions
+
+# ── Bitget ──
+def load_secrets():
+    try: return json.load(open(SECRETS_FILE))
+    except Exception: return {}
+
+def fetch_bitget(secrets):
+    cfg = secrets.get("bitget", {})
+    key, sec, pw = cfg.get("apiKey",""), cfg.get("secret",""), cfg.get("password","")
+    if not key: return []
+    ts = str(int(time.time()*1000))
+    path = "/api/v2/spot/account/assets"
+    sig = base64.b64encode(hmac.new(sec.encode(), f"{ts}GET{path}".encode(), hashlib.sha256).digest()).decode()
+    headers = {"ACCESS-KEY": key, "ACCESS-SIGN": sig, "ACCESS-TIMESTAMP": ts, "ACCESS-PASSPHRASE": pw, "Content-Type": "application/json"}
+    positions = []
+    try:
+        data = http_get(f"https://api.bitget.com{path}", headers=headers, timeout=10)
+        for item in data.get("data", []):
+            avail = float(item.get("available", 0)) + float(item.get("frozen", 0))
+            if avail <= 0: continue
+            ccy = item.get("coin", "")
+            usd_val = float(item.get("usdtValue", 0))
+            if usd_val <= 0:
+                if ccy in ("USDT","USDC"): price = 1.0
+                else:
+                    try:
+                        tk = http_get(f"https://api.bitget.com/api/v2/spot/market/tickers?symbol={ccy}USDT", timeout=5)
+                        price = float(tk["data"][0]["lastPr"])
+                    except Exception: price = 0
+                usd_val = avail * price
+            else:
+                price = usd_val / avail if avail else 0
+            positions.append({"symbol": ccy, "amount": avail, "value_usd": usd_val, "price": price, "exchange": "Bitget", "type": "spot"})
+    except Exception: pass
+    return positions
+
+# ── 渲染 ──
+def render(futu_positions, futu_cash, ibkr_net, crypto, cny_rate, mode="api"):
+    futu_total = sum(p.get("market_val_usd", 0) or p.get("market_val", 0) for p in (futu_positions or []))
+    by_ex = {}
+    for p in (crypto or []):
+        by_ex.setdefault(p["exchange"], []).append(p)
+    crypto_total = sum(p["value_usd"] for p in (crypto or []))
+    grand = futu_total + ibkr_net + futu_cash + crypto_total
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    W = 50
+    print("=" * W)
+    print(f"  💰 WealthLens  |  {now}  [{mode}]")
+    print("=" * W)
+    print(f"\n  {'类别':<16} {'USD':>13} {'CNY':>13}")
+    print(f"  {'-'*44}")
+
+    rows = []
+    if futu_total: rows.append(("🟠 Futu 持仓", futu_total))
+    if ibkr_net:   rows.append(("🔵 IBKR 净值", ibkr_net))
+    if futu_cash:  rows.append(("  现金", futu_cash))
+    for ex in ["OKX", "Binance", "Bitget"]:
+        if ex in by_ex:
+            v = sum(p["value_usd"] for p in by_ex[ex])
+            emoji = {"OKX":"🔶","Binance":"🟡","Bitget":"⬛"}.get(ex,"🔷")
+            rows.append((f"{emoji} {ex}", v))
+    for label, val in rows:
+        print(f"  {label:<16} {fmt_usd(val)} {fmt_cny(val*cny_rate)}")
+    print(f"  {'-'*44}")
+    print(f"  {'💰 总资产':<16} \033[1m{fmt_usd(grand)}\033[0m {fmt_cny(grand*cny_rate)}")
+
+    if futu_positions:
+        print(f"\n  ── 🟠 Futu ──")
+        for p in sorted(futu_positions, key=lambda x: -(x.get("market_val_usd",0) or x.get("market_val",0))):
+            name = p.get("stock_name","")[:14]
+            mv = p.get("market_val_usd", 0) or p.get("market_val", 0)
+            pnl = p.get("pl_val_usd", 0) or p.get("pl_val", 0)
+            sign = "+" if pnl >= 0 else ""
+            print(f"  {name:<14} {fmt_usd(mv)} {sign}${pnl:,.0f}")
+
+    if crypto:
+        print(f"\n  ── 🔶 加密 ──")
+        for ex in ["OKX", "Binance", "Bitget"]:
+            if ex not in by_ex: continue
+            items = sorted(by_ex[ex], key=lambda x: -x["value_usd"])
+            total = sum(p["value_usd"] for p in items)
+            coins = " ".join(f"{p['symbol']}${p['value_usd']:,.0f}" for p in items if p["value_usd"] >= 1)
+            print(f"  {ex:<8} {fmt_usd(total)}  {coins}")
+
+    print(f"\n  汇率: USD/CNY {cny_rate:.4f}")
+    print("=" * W)
+
+def main():
+    parser = argparse.ArgumentParser(description="WealthLens CLI — 资产看板")
+    parser.add_argument("--watch", action="store_true", help="持续刷新")
+    parser.add_argument("--interval", type=int, default=60, help="刷新间隔（秒）")
+    parser.add_argument("--direct", action="store_true", help="强制直连交易所")
+    args = parser.parse_args()
+
+    while True:
+        if args.watch: clear()
+        print("  ⏳ 拉取数据中...")
+        cny_rate, _ = get_rates()
+        futu_positions, futu_cash, ibkr_net, crypto, mode = [], 0, 0, [], "direct"
+
+        if not args.direct:
+            try:
+                snap = http_get(f"{API}/api/assets/snapshot", timeout=70)
+                crypto_data = http_get(f"{API}/api/crypto", timeout=60)
+                futu_positions = [p for p in snap.get("stocks",{}).get("positions",[]) if p.get("source")=="futu"]
+                ibkr_net = snap.get("funds",{}).get("ibkr_net_liquidation", 0)
+                futu_cash = snap.get("funds",{}).get("cash_usd",0) - snap.get("funds",{}).get("ibkr_cash_usd",0)
+                cny_rate = snap.get("rates",{}).get("usd_to_cny", cny_rate)
+                crypto = crypto_data or []
+                mode = "api"
+            except Exception:
+                print("  ⚠️  Backend 未运行，切换到直连模式...")
+                args.direct = True
+
+        if args.direct:
+            secrets = load_secrets()
+            crypto = []
+            crypto.extend(fetch_okx(secrets))
+            crypto.extend(fetch_binance(secrets))
+            crypto.extend(fetch_bitget(secrets))
+            # 合并同交易所同币种
+            merged = {}
+            for p in crypto:
+                k = f"{p['exchange']}:{p['symbol']}"
+                if k in merged:
+                    merged[k]["amount"] += p["amount"]
+                    merged[k]["value_usd"] += p["value_usd"]
+                else: merged[k] = p.copy()
+            crypto = list(merged.values())
+            # Futu 微服务
+            try:
+                fdata = http_get("http://localhost:8000/api/positions", timeout=15)
+                futu_positions = fdata.get("positions", [])
+                futu_cash = fdata.get("cash_usd", 0)
+            except Exception: pass
+            mode = "direct"
+
+        if args.watch: clear()
+        render(futu_positions, futu_cash, ibkr_net, crypto, cny_rate, mode)
+        if not args.watch: break
+        time.sleep(args.interval)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n  再见！")
