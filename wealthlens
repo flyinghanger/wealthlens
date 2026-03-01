@@ -16,6 +16,26 @@ PROJ = os.path.dirname(os.path.realpath(__file__))
 SECRETS_FILE = os.path.join(PROJ, "config", "secrets.json")
 RATES_CACHE = os.path.join(PROJ, "data", "rates-cache.json")
 API = "http://localhost:3001"
+SNAPSHOT_CACHE = os.path.join(PROJ, "data", "snapshot-cache.json")
+SNAPSHOT_TTL = 10 * 60  # 10 分钟
+
+def load_snapshot_cache():
+    try:
+        if os.path.exists(SNAPSHOT_CACHE):
+            data = json.load(open(SNAPSHOT_CACHE))
+            age = time.time() - data.get("_cached_at", 0)
+            if age < SNAPSHOT_TTL:
+                return data, int(SNAPSHOT_TTL - age)
+    except Exception: pass
+    return None, 0
+
+def save_snapshot_cache(snap_data, crypto_data):
+    try:
+        cache = {"snap": snap_data, "crypto": crypto_data, "_cached_at": time.time()}
+        os.makedirs(os.path.dirname(SNAPSHOT_CACHE), exist_ok=True)
+        with open(SNAPSHOT_CACHE, "w") as f:
+            json.dump(cache, f)
+    except Exception: pass
 
 def http_get(url, headers=None, timeout=10):
     """HTTP GET — 优先 curl（代理友好），回退 urllib"""
@@ -259,22 +279,35 @@ def main():
         if args.watch: clear()
         print("  ⏳ 拉取数据中...")
         cny_rate, _ = get_rates()
-        futu_positions, futu_cash, ibkr_net, crypto, mode = [], 0, 0, [], "direct"
+        futu_positions, futu_cash, ibkr_net, crypto, mode, ibkr_positions = [], 0, 0, [], "direct", []
 
+        cache_ttl_left = 0
         if not args.direct:
-            try:
+            cached, cache_ttl_left = load_snapshot_cache()
+            if cached and not args.watch:  # watch 模式不用缓存
+                snap = cached["snap"]
+                crypto_data = cached["crypto"]
+                mode = "cache"
+            else:
+                cached = None
+
+            if not cached:
+              try:
                 snap = http_get(f"{API}/api/assets/snapshot", timeout=70)
                 crypto_data = http_get(f"{API}/api/crypto", timeout=60)
+                save_snapshot_cache(snap, crypto_data)
+                mode = "api"
+              except Exception:
+                print("  ⚠️  Backend 未运行，切换到直连模式...")
+                args.direct = True
+
+            if not args.direct and mode in ("api", "cache"):
                 futu_positions = [p for p in snap.get("stocks",{}).get("positions",[]) if p.get("source")=="futu"]
+                ibkr_positions = [p for p in snap.get("stocks",{}).get("positions",[]) if p.get("source")=="ibkr"] if mode == "cache" else ibkr_positions
                 ibkr_net = snap.get("funds",{}).get("ibkr_net_liquidation", 0)
                 futu_cash = snap.get("funds",{}).get("cash_usd",0) - snap.get("funds",{}).get("ibkr_cash_usd",0)
                 cny_rate = snap.get("rates",{}).get("usd_to_cny", cny_rate)
                 crypto = crypto_data or []
-                ibkr_positions = [p for p in snap.get("stocks",{}).get("positions",[]) if p.get("source")=="ibkr"]
-                mode = "api"
-            except Exception:
-                print("  ⚠️  Backend 未运行，切换到直连模式...")
-                args.direct = True
 
         if args.direct:
             secrets = load_secrets()
