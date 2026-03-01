@@ -93,17 +93,25 @@ pm2 start ecosystem.config.js
 open http://localhost:3000/dashboard
 ```
 
-**CLI/TUI** — Quick terminal check:
+**CLI** — Quick terminal check:
 ```bash
 # Install (symlink to PATH)
 ln -s $(pwd)/wealthlens /usr/local/bin/wealthlens
 
-# One-shot (auto-detects backend, falls back to direct API)
+# One-shot (auto-detects backend, falls back to direct exchange APIs)
 wealthlens
 
-# Force direct exchange access (no backend needed)
-wealthlens --interval 30
+# Force direct mode (no backend/services needed)
+wealthlens --direct
+
+# Auto-refresh every 60s
+wealthlens --watch
+
+# Custom interval
+wealthlens --watch --interval 30
 ```
+
+> **Direct mode**: Connects to OKX, Binance, Bitget APIs directly using keys from `config/secrets.json`. Futu data requires the Futu microservice. No NestJS backend needed.
 
 **Chat via OpenClaw** — Talk to your portfolio:
 
