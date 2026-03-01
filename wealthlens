@@ -177,6 +177,15 @@ def fetch_bitget(secrets):
 
 # ── 渲染 ──
 def render(futu_positions, futu_cash, ibkr_net, crypto, cny_rate, mode="api"):
+    # Futu 直连返回的是 HKD，需要转 USD
+    _, hkd_to_usd = get_rates()
+    for p in (futu_positions or []):
+        if not p.get("market_val_usd") and p.get("market_val") and p.get("currency","") == "HKD":
+            p["market_val_usd"] = p["market_val"] * hkd_to_usd
+            p["pl_val_usd"] = p.get("pl_val", 0) * hkd_to_usd
+        elif not p.get("market_val_usd") and p.get("market_val"):
+            p["market_val_usd"] = p["market_val"]  # USD 原值
+            p["pl_val_usd"] = p.get("pl_val", 0)
     futu_total = sum(p.get("market_val_usd", 0) or p.get("market_val", 0) for p in (futu_positions or []))
     by_ex = {}
     for p in (crypto or []):
