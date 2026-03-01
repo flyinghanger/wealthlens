@@ -59,12 +59,12 @@ export class IbkrClient {
   async getFunds(): Promise<IbkrFunds | null> {
     try {
       const { data } = await firstValueFrom(
-        this.httpService.get<{ funds: IbkrFunds }>(
+        this.httpService.get<any>(
           `${IBKR_SERVICE_URL}/api/funds`,
-          { timeout: 15000 },
+          { timeout: 45000 },
         ),
       );
-      return data.funds;
+      const funds = data.funds || data; return funds.net_liquidation ? funds : null;
     } catch (error) {
       console.error('Failed to fetch IBKR funds:', error.message);
       return null;
@@ -82,7 +82,7 @@ export class IbkrClient {
           { timeout: 2000 },
         ),
       );
-      return data.status === 'ok' && data.ib_connected;
+      return data.status === 'connected' || (data.status === 'ok' && data.ib_connected);
     } catch {
       return false;
     }

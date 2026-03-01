@@ -1,39 +1,22 @@
 """
-IBKR Client Portal API 微服务
-通过本地 Client Portal Gateway 获取持仓和账户信息
-不需要 IB Gateway / TWS，不占用手机 session
-
-前置：
-1. 下载 Client Portal Gateway: https://www.interactivebrokers.com/en/trading/ib-api.php
-2. 启动: cd clientportal.gw && sh bin/run.sh root/conf.yaml
-3. 浏览器打开 https://localhost:5000，登录一次
+IBKR 微服务 — 持久连接 IB Gateway
+端口: 8001
 """
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+import asyncio
 import os
 import logging
-import httpx
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
 
-CP_HOST = os.getenv("CP_HOST", "https://localhost:5000")
-CP_VERIFY_SSL = os.getenv("CP_VERIFY_SSL", "false").lower() != "true"  # 本地自签名证书，默认跳过验证
+IB_HOST = os.getenv("IB_HOST", "127.0.0.1")
+IB_PORT = int(os.getenv("IB_PORT", "4001"))
+IB_CLIENT_ID = int(os.getenv("IB_CLIENT_ID", "10"))
 
-app = FastAPI(title="IBKR Client Portal Service", version="2.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3001", "http://127.0.0.1:3001"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-def get_client():
-    return httpx.Client(base_url=CP_HOST, verify=False, timeout=15.0)
-
+ib = None  # 全局持久连接
 
 def to_number(value, default=0.0):
     try:
@@ -41,162 +24,110 @@ def to_number(value, default=0.0):
     except (TypeError, ValueError):
         return default
 
+async def ensure_connected():
+    global ib
+    from ib_async import IB
+    if ib and ib.isConnected():
+        return ib
+    ib = IB()
+    await ib.connectAsync(IB_HOST, IB_PORT, clientId=IB_CLIENT_ID, timeout=15)
+    logger.info(f"Connected to IB Gateway, accounts: {ib.managedAccounts()}")
+    return ib
+
+@asynccontextmanager
+async def lifespan(app):
+    # 启动时连接
+    try:
+        await ensure_connected()
+    except Exception as e:
+        logger.warning(f"Initial IB connection failed: {e}")
+    yield
+    # 关闭时断开
+    global ib
+    if ib and ib.isConnected():
+        ib.disconnect()
+
+app = FastAPI(title="IBKR Gateway Service", version="3.0.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
-def health():
-    """健康检查 + 验证 Client Portal 是否登录"""
+async def health():
     try:
-        with get_client() as client:
-            r = client.get("/v1/api/iserver/auth/status")
-            data = r.json()
-            authenticated = data.get("authenticated", False)
-            connected = data.get("connected", False)
-            return {
-                "status": "ok" if authenticated else "disconnected",
-                "service": "ibkr-clientportal",
-                "version": "2.0.0",
-                "ib_connected": authenticated and connected,
-                "authenticated": authenticated,
-                "connected": connected,
-            }
+        conn = await ensure_connected()
+        return {"status": "connected", "accounts": conn.managedAccounts()}
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return {
-            "status": "disconnected",
-            "service": "ibkr-clientportal",
-            "version": "2.0.0",
-            "ib_connected": False,
-            "error": str(e),
-        }
-
-
-def get_accounts(client):
-    """获取账户列表"""
-    r = client.get("/v1/api/iserver/accounts")
-    r.raise_for_status()
-    data = r.json()
-    accounts = data.get("accounts", [])
-    if not accounts:
-        raise HTTPException(503, "No IBKR accounts found")
-    return accounts
-
-
-@app.get("/api/positions")
-def get_positions():
-    """获取 IBKR 持仓"""
-    try:
-        with get_client() as client:
-            # 先获取账户
-            accounts = get_accounts(client)
-            account_id = accounts[0]
-            logger.info(f"Fetching positions for account: {account_id}")
-
-            # 获取持仓
-            r = client.get(f"/v1/api/portfolio/{account_id}/positions/0")
-            r.raise_for_status()
-            raw_positions = r.json()
-
-            if not raw_positions:
-                return {"positions": []}
-
-            result = []
-            for pos in raw_positions:
-                qty = to_number(pos.get("position", 0))
-                if qty == 0:
-                    continue
-
-                currency = pos.get("currency", "USD")
-                symbol = pos.get("ticker", pos.get("contractDesc", ""))
-                sec_type = pos.get("assetClass", "STK")
-                exchange = pos.get("listingExchange", "")
-                avg_cost = to_number(pos.get("avgCost", 0))
-                mkt_price = to_number(pos.get("mktPrice", 0))
-                mkt_value = to_number(pos.get("mktValue", 0))
-                unrealized_pnl = to_number(pos.get("unrealizedPnl", 0))
-
-                # 构造 code（与 futu 格式对齐）
-                if currency == "USD":
-                    code = f"US.{symbol}"
-                elif currency == "HKD":
-                    code = f"HK.{symbol}"
-                elif currency == "EUR":
-                    code = f"EUR.{symbol}"
-                else:
-                    code = f"{currency}.{symbol}"
-
-                pl_ratio = (unrealized_pnl / (avg_cost * qty) * 100) if avg_cost and qty else 0
-
-                result.append({
-                    "code": code,
-                    "stock_name": symbol,
-                    "qty": qty,
-                    "cost_price": avg_cost,
-                    "nominal_price": mkt_price,
-                    "market_val": mkt_value,
-                    "pl_val": unrealized_pnl,
-                    "pl_ratio": pl_ratio,
-                    "price_change_24h_percent": 0.0,
-                    "price_change_24h_value": 0.0,
-                    "currency": currency,
-                    "exchange": exchange,
-                    "sec_type": sec_type,
-                })
-
-            logger.info(f"Fetched {len(result)} positions")
-            return {"positions": result}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching positions: {e}")
-        raise HTTPException(500, f"Failed to fetch positions: {str(e)}")
-
+        return {"status": "disconnected", "error": str(e)}
 
 @app.get("/api/funds")
-def get_funds():
-    """获取 IBKR 账户资金"""
+async def get_funds():
     try:
-        with get_client() as client:
-            accounts = get_accounts(client)
-            account_id = accounts[0]
-            logger.info(f"Fetching funds for account: {account_id}")
+        conn = await ensure_connected()
+        summary = await asyncio.wait_for(conn.accountSummaryAsync(), timeout=30)
 
-            # 获取账户摘要
-            r = client.get(f"/v1/api/portfolio/{account_id}/summary")
-            r.raise_for_status()
-            summary = r.json()
+        result = {}
+        for s in summary:
+            if s.tag == "NetLiquidation" and s.currency == "USD":
+                result["net_liquidation"] = to_number(s.value)
+                result["currency"] = "USD"
+            elif s.tag == "TotalCashValue" and s.currency == "USD":
+                result["cash"] = to_number(s.value)
+            elif s.tag == "GrossPositionValue" and s.currency == "USD":
+                result["gross_position"] = to_number(s.value)
+            elif s.tag == "UnrealizedPnL" and s.currency == "BASE":
+                result["unrealized_pnl"] = to_number(s.value)
 
-            def get_val(key):
-                item = summary.get(key, {})
-                return to_number(item.get("amount", 0))
-
-            net_liquidation = get_val("netliquidation")
-            total_cash = get_val("totalcashvalue")
-            buying_power = get_val("buyingpower")
-            unrealized_pnl = get_val("unrealizedpnl")
-            realized_pnl = get_val("realizedpnl")
-
-            logger.info(f"Account {account_id}: NetLiq={net_liquidation:.2f}, Cash={total_cash:.2f}")
-            return {
-                "funds": {
-                    "net_liquidation": net_liquidation,
-                    "total_cash": total_cash,
-                    "buying_power": buying_power,
-                    "unrealized_pnl": unrealized_pnl,
-                    "realized_pnl": realized_pnl,
-                    "currency": "USD",
-                    "details": summary,
-                }
-            }
-
-    except HTTPException:
-        raise
+        logger.info(f"Funds: net={result.get('net_liquidation')} cash={result.get('cash')}")
+        return result
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Timeout")
     except Exception as e:
-        logger.error(f"Error fetching funds: {e}")
-        raise HTTPException(500, f"Failed to fetch funds: {str(e)}")
+        logger.error(f"funds error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/positions")
+async def get_positions():
+    try:
+        conn = await ensure_connected()
+        positions = await asyncio.wait_for(conn.reqPositionsAsync(), timeout=60)
+
+        result = []
+        for pos in positions:
+            contract = pos.contract
+            qty = to_number(pos.position)
+            avg_cost = to_number(pos.avgCost)
+            if qty == 0:
+                continue
+
+            market_val = abs(qty * avg_cost)
+            result.append({
+                "code": contract.symbol,
+                "stock_name": contract.localSymbol or contract.symbol,
+                "qty": qty,
+                "cost_price": avg_cost,
+                "nominal_price": avg_cost,
+                "market_val": market_val,
+                "market_val_usd": market_val,
+                "pl_val": 0,
+                "pl_val_usd": 0,
+                "currency": contract.currency or "USD",
+                "source": "ibkr",
+            })
+
+        logger.info(f"Positions: {len(result)} holdings")
+        return {"positions": result, "count": len(result)}
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Timeout")
+    except Exception as e:
+        logger.error(f"positions error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info(f"Starting IBKR Client Portal Service, connecting to {CP_HOST}")
-    uvicorn.run(app, host="127.0.0.1", port=8001, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=8001)
