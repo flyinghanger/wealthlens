@@ -238,11 +238,11 @@ def render(futu_positions, futu_cash, ibkr_net, crypto, cny_rate, mode="api", ib
     if futu_positions:
         print(f"\n  ── 🟠 Futu ──")
         for p in sorted(futu_positions, key=lambda x: -(x.get("market_val_usd",0) or x.get("market_val",0))):
-            name = p.get("stock_name","")[:14]
+            code = p.get("code","").split(".")[-1][:10]  # US.NVDA → NVDA
             mv = p.get("market_val_usd", 0) or p.get("market_val", 0)
             pnl = p.get("pl_val_usd", 0) or p.get("pl_val", 0)
             sign = "+" if pnl >= 0 else ""
-            print(f"  {name:<14} {fmt_usd(mv)} {sign}${pnl:,.0f}")
+            print(f"  {code:<10} {fmt_usd(mv)} {sign}${pnl:,.0f}")
 
     if crypto:
         print(f"\n  ── 🔶 加密 ──")
