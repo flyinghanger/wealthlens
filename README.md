@@ -3,7 +3,7 @@
 A multi-broker **wealth aggregation tool** with three interfaces:
 
 🖥️ **GUI** — Next.js dashboard for visual overview
-⌨️ **CLI/TUI** — Terminal dashboard for quick checks
+⌨️ **CLI** — `wealthlens` command, works with or without backend
 💬 **Chat** — AI-powered queries via Telegram/OpenClaw
 
 ### Supported Data Sources
@@ -38,7 +38,7 @@ A multi-broker **wealth aggregation tool** with three interfaces:
 ### Tech Stack
 - **Backend**: NestJS + TypeScript + TypeORM + SQLite
 - **Frontend**: Next.js 15 + React 19 + TailwindCSS + Recharts
-- **TUI**: Python (zero dependencies)
+- **CLI**: Python (zero dependencies, direct exchange API access)
 - **Futu Service**: Python + Futu OpenD
 - **IBKR Service**: Python + IB Gateway
 - **Process Manager**: PM2 for zero-downtime
@@ -95,14 +95,14 @@ open http://localhost:3000/dashboard
 
 **CLI/TUI** — Quick terminal check:
 ```bash
-# One-shot view
-python3 tui.py
+# Install (symlink to PATH)
+ln -s $(pwd)/wealthlens /usr/local/bin/wealthlens
 
-# Auto-refresh every 60s
-python3 tui.py --watch
+# One-shot (auto-detects backend, falls back to direct API)
+wealthlens
 
-# Custom interval
-python3 tui.py --watch --interval 30
+# Force direct exchange access (no backend needed)
+wealthlens --interval 30
 ```
 
 **Chat via OpenClaw** — Talk to your portfolio:
@@ -143,7 +143,7 @@ No special integration needed — any AI agent that can call HTTP APIs can use W
 ```
 ┌──────────┐  ┌──────────┐  ┌──────────┐
 │ Browser  │  │ CLI/TUI  │  │ OpenClaw │
-│ :3000    │  │ tui.py   │  │ Telegram │
+│ :3000    │  │wealthlens│  │ Telegram │
 └────┬─────┘  └────┬─────┘  └────┬─────┘
      │             │              │
      └─────────────┼──────────────┘
