@@ -45,3 +45,4 @@ pids/
 # 测试
 coverage/
 .nyc_output/
+config/cost-basis.json
