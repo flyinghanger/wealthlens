@@ -244,6 +244,15 @@ def render(futu_positions, futu_cash, ibkr_net, crypto, cny_rate, mode="api", ib
             sign = "+" if pnl >= 0 else ""
             print(f"  {code:<10} {fmt_usd(mv)} {sign}${pnl:,.0f}")
 
+    if ibkr_positions:
+        print(f"\n  ── 🔵 IBKR ──")
+        for p in sorted(ibkr_positions, key=lambda x: -abs(x.get("market_val_usd",0) or x.get("market_val",0))):
+            code = p.get("code","").split(".")[-1][:10]
+            mv = p.get("market_val_usd", 0) or p.get("market_val", 0)
+            pnl = p.get("pl_val_usd", 0) or p.get("pl_val", 0)
+            sign = "+" if pnl >= 0 else ""
+            print(f"  {code:<10} {fmt_usd(mv)} {sign}${pnl:,.0f}")
+
     if crypto:
         print(f"\n  ── 🔶 加密 ──")
         for ex in ["OKX", "Binance", "Bitget"]:
@@ -340,6 +349,13 @@ def main():
                 fdata = http_get("http://localhost:8000/api/positions", timeout=15)
                 futu_positions = fdata.get("positions", [])
                 futu_cash = fdata.get("cash_usd", 0)
+            except Exception: pass
+            # IBKR 微服务
+            try:
+                ibkr_funds = http_get("http://localhost:8001/api/funds", timeout=15)
+                ibkr_net = ibkr_funds.get("net_liquidation", 0)
+                ibkr_pos_data = http_get("http://localhost:8001/api/positions", timeout=15)
+                ibkr_positions = ibkr_pos_data.get("positions", [])
             except Exception: pass
             mode = "direct"
 
