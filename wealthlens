@@ -196,16 +196,59 @@ def fetch_bitget(secrets):
     return positions
 
 # ── 渲染 ──
+import re as _re
+
+def _format_code(code, stock_name=""):
+    """格式化股票代码：期权显示为 TSLA期权，港股保留数字代码"""
+    raw = code.split(".")[-1]
+    # 检测期权
+    # 1) stock_name 含期权格式，如 "CRWV  260320P00080000" 或 "TSLA 270115 420.00C"
+    if stock_name and _re.search(r'\d{6}[PC]', stock_name):
+        base = stock_name.split()[0]
+        return f"{base}期权"
+    # 2) code 本身是期权格式，如 TSLA270115C420000
+    m = _re.match(r'^([A-Z]+)\d{6}[PC]\d+', raw)
+    if m:
+        return f"{m.group(1)}期权"
+    return raw[:10]
+
+def _display_width(s):
+    """计算字符串显示宽度（中文/全角占2列）"""
+    import unicodedata
+    w = 0
+    for c in s:
+        if unicodedata.east_asian_width(c) in ('W', 'F'):
+            w += 2
+        else:
+            w += 1
+    return w
+
+def _pad(s, width):
+    """按显示宽度右填充空格"""
+    return s + " " * (width - _display_width(s))
+
+def _pnl_str(v):
+    """盈亏格式：+$1,234 / -$1,234"""
+    if v >= 0:
+        return f"+${v:,.0f}"
+    else:
+        return f"-${abs(v):,.0f}"
+
+def _pnl_color(v):
+    """带 ANSI 颜色的盈亏"""
+    s = _pnl_str(v)
+    return f"\033[32m{s}\033[0m" if v >= 0 else f"\033[31m{s}\033[0m"
+
 def render(futu_positions, futu_cash, ibkr_net, crypto, cny_rate, mode="api", ibkr_positions=None):
-    # Futu 直连返回的是 HKD，需要转 USD
     _, hkd_to_usd = get_rates()
     for p in (futu_positions or []):
         if not p.get("market_val_usd") and p.get("market_val") and p.get("currency","") == "HKD":
             p["market_val_usd"] = p["market_val"] * hkd_to_usd
             p["pl_val_usd"] = p.get("pl_val", 0) * hkd_to_usd
         elif not p.get("market_val_usd") and p.get("market_val"):
-            p["market_val_usd"] = p["market_val"]  # USD 原值
+            p["market_val_usd"] = p["market_val"]
             p["pl_val_usd"] = p.get("pl_val", 0)
+
     futu_total = sum(p.get("market_val_usd", 0) or p.get("market_val", 0) for p in (futu_positions or []))
     by_ex = {}
     for p in (crypto or []):
@@ -213,80 +256,62 @@ def render(futu_positions, futu_cash, ibkr_net, crypto, cny_rate, mode="api", ib
     crypto_total = sum(p["value_usd"] for p in (crypto or []))
     grand = futu_total + ibkr_net + futu_cash + crypto_total
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    W = 50
-    print("=" * W)
-    print(f"  💰 WealthLens  |  {now}  [{mode}]")
-    print("=" * W)
-    print(f"\n  {'类别':<16} {'USD':>13} {'CNY':>13}")
-    print(f"  {'-'*44}")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    SEP = "─" * 30
 
-    rows = []
-    if futu_total: rows.append(("🟠 Futu 持仓", futu_total))
-    if ibkr_net:   rows.append(("🔵 IBKR 净值", ibkr_net))
-    if futu_cash:  rows.append(("  现金", futu_cash))
-    for ex in ["OKX", "Binance", "Bitget"]:
-        if ex in by_ex:
-            v = sum(p["value_usd"] for p in by_ex[ex])
-            emoji = {"OKX":"🔶","Binance":"🟡","Bitget":"⬛"}.get(ex,"🔷")
-            rows.append((f"{emoji} {ex}", v))
-    for label, val in rows:
-        print(f"  {label:<16} {fmt_usd(val)} {fmt_cny(val*cny_rate)}")
-    print(f"  {'-'*44}")
-    print(f"  {'💰 总资产':<16} \033[1m{fmt_usd(grand)}\033[0m {fmt_cny(grand*cny_rate)}")
+    # ── 标题 ──
+    print(f"\n💰 WealthLens  {now}  [{mode}]")
+    print(f"总资产 \033[1m${grand:,.0f}\033[0m (¥{grand*cny_rate:,.0f})")
 
+    # ── Futu ──
     if futu_positions:
-        print(f"\n  ── 🟠 Futu ──")
+        print(f"\n── Futu {SEP}")
         for p in sorted(futu_positions, key=lambda x: -(x.get("market_val_usd",0) or x.get("market_val",0))):
-            code = p.get("code","").split(".")[-1][:10]  # US.NVDA → NVDA
+            code = _format_code(p.get("code",""), p.get("stock_name",""))
             mv = p.get("market_val_usd", 0) or p.get("market_val", 0)
             pnl = p.get("pl_val_usd", 0) or p.get("pl_val", 0)
-            sign = "+" if pnl >= 0 else ""
-            print(f"  {code:<10} {fmt_usd(mv)} {sign}${pnl:,.0f}")
+            pnl_s = _pnl_str(pnl)
+            print(f"  {_pad(code, 10)} $ {mv:>6,.0f}  {_pnl_color(pnl):>20}")
 
+    # ── IBKR ──
     if ibkr_positions:
-        print(f"\n  ── 🔵 IBKR ──")
+        print(f"\n── IBKR {SEP}")
         for p in sorted(ibkr_positions, key=lambda x: -abs(x.get("market_val_usd",0) or x.get("market_val",0))):
-            code = p.get("code","").split(".")[-1][:10]
+            code = _format_code(p.get("code",""), p.get("stock_name",""))
             mv = p.get("market_val_usd", 0) or p.get("market_val", 0)
             pnl = p.get("pl_val_usd", 0) or p.get("pl_val", 0)
-            sign = "+" if pnl >= 0 else ""
-            print(f"  {code:<10} {fmt_usd(mv)} {sign}${pnl:,.0f}")
+            print(f"  {_pad(code, 10)} $ {mv:>6,.0f}  {_pnl_color(pnl):>20}")
 
+    # ── 加密 ──
     if crypto:
-        print(f"\n  ── 🔶 加密 ──")
+        print(f"\n── 加密 {SEP}")
         for ex in ["OKX", "Binance", "Bitget"]:
             if ex not in by_ex: continue
             items = sorted(by_ex[ex], key=lambda x: -x["value_usd"])
             total = sum(p["value_usd"] for p in items)
-            coins = " ".join(f"{p['symbol']}${p['value_usd']:,.0f}" for p in items if p["value_usd"] >= 1)
-            print(f"  {ex:<8} {fmt_usd(total)}  {coins}")
+            coins = " ".join(p["symbol"] for p in items if p["value_usd"] >= 1)
+            print(f"  {ex:<8} $ {total:>6,.0f}  {coins}")
 
-    # 盈亏汇总
+    # ── 盈亏 ──
     futu_pnl = sum(p.get("pl_val_usd", 0) or p.get("pl_val", 0) for p in (futu_positions or []))
     ibkr_pnl = sum(p.get("pl_val_usd", 0) for p in (ibkr_positions or []))
     total_pnl = futu_pnl + ibkr_pnl
-    def pnl_fmt(v):
-        s = f"+${v:,.0f}" if v >= 0 else f"-${abs(v):,.0f}"
-        return f"\033[32m{s}\033[0m" if v >= 0 else f"\033[31m{s}\033[0m"
-    print(f"\n  ── 📊 盈亏 ──")
-    if futu_pnl: print(f"  Futu      {pnl_fmt(futu_pnl)}")
-    if ibkr_pnl: print(f"  IBKR      {pnl_fmt(ibkr_pnl)}")
-    print(f"  总盈亏    {pnl_fmt(total_pnl)}")
+    print(f"\n── 📊 盈亏 {SEP[:-3]}")
+    if futu_pnl: print(f"  Futu      {_pnl_color(futu_pnl)}")
+    if ibkr_pnl: print(f"  IBKR      {_pnl_color(ibkr_pnl)}")
+    print(f"  总盈亏    {_pnl_color(total_pnl)}")
     print(f"  (加密盈亏自 2026-03-01 起算)")
 
-    # 汇率缓存时间
+    # ── 汇率 ──
     rate_age = ""
     try:
-        import os as _os
-        rc = _os.path.join(_os.path.dirname(_os.path.realpath(__file__)), "data", "rates-cache.json")
-        if _os.path.exists(rc):
+        rc = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data", "rates-cache.json")
+        if os.path.exists(rc):
             rc_data = json.load(open(rc))
             age_h = (time.time() * 1000 - rc_data.get("updated_at", 0)) / 3600000
-            rate_age = f"  ({age_h:.1f}h ago, 8h TTL)"
+            rate_age = f" ({age_h:.1f}h ago)"
     except Exception: pass
-    print(f"\n  汇率: USD/CNY {cny_rate:.4f}{rate_age}")
-    print("=" * W)
+    print(f"\n  USD/CNY {cny_rate:.4f}{rate_age}")
 
 def main():
     parser = argparse.ArgumentParser(description="WealthLens CLI — 资产看板")
