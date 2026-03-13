@@ -254,8 +254,15 @@ async handleSnapshotCron() { ... }
 
 ---
 
+## 🤖 OpenClaw Skill
+
+WealthLens ships with an [OpenClaw](https://github.com/openclaw/openclaw) skill for AI-powered chat integration. Your agent can run the dashboard from Telegram, Discord, or any supported channel.
+
+See **[skills/SKILL.md](./skills/SKILL.md)** for setup and trigger words.
+
 ## 📖 Related Docs
 
+- **[skills/SKILL.md](./skills/SKILL.md)** — OpenClaw agent skill (chat-based dashboard)
 - **[SETUP.md](./SETUP.md)** — Complete setup guide with troubleshooting
 - **[QUICKSTART.md](./QUICKSTART.md)** — Quick reference for common tasks
 - **[AGENT_HANDOFF.md](./AGENT_HANDOFF.md)** — For AI agents to understand the system
