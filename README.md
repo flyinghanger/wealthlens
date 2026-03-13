@@ -3,155 +3,41 @@
 A multi-broker **wealth aggregation tool** with three interfaces:
 
 🖥️ **GUI** — Next.js dashboard for visual overview
-⌨️ **CLI** — `wealthlens` command, works with or without backend
+⌨️ **CLI** — `wealthlens` / `wl` command, works with or without backend
 💬 **Chat** — AI-powered queries via Telegram/OpenClaw
 
 ### Supported Data Sources
-- 📈 **Stocks**: Futu (HK/US) + Interactive Brokers (US)
-- 💎 **Crypto**: OKX, Binance, Bitget + on-chain wallets
-- 💱 **FX Rates**: Multi-source with smart caching (currencyapi → exchangerate-api → open.er-api)
-- 📊 **Historical**: SQLite snapshots with data integrity checks
+- 📈 **Stocks**: Futu (HK/US) + Interactive Brokers (US/Global)
+- 💎 **Crypto**: OKX, Binance, Bitget (spot + earn)
+- 💱 **FX Rates**: Multi-source with smart caching & disk persistence
 
 ---
 
 ## 🎯 Key Features
 
 ### Multi-Source Integration
-- **CEX**: OKX, Binance, Bitget spot/futures
-- **DEX**: Multi-chain wallet tracking (ETH, BSC, Arbitrum, Base, etc.)
-- **Stocks**: Futu Securities API (US/HK) + IBKR (US markets)
+- **CEX**: OKX, Binance, Bitget spot/earn/funding
+- **Stocks (Futu)**: HK & US markets via Futu OpenD API
+- **Stocks (IBKR)**: US & global markets via IB Gateway + IBC
 - **Manual**: Custom entries for cash, funds, etc.
 
-### Smart Data Collection
-- Automatic balance fetching
-- Market price caching
-- Snapshot system with data integrity checks
-- Fallback mechanisms for API failures
+### Smart Data Pipeline
+- Three-tier data flow: Backend API → Direct exchange APIs → Disk cache
+- 10-minute snapshot caching with automatic invalidation
+- FX rate caching: open.er-api.com → disk cache (24h) → hardcoded fallback
+- Proxy-aware HTTP client (auto-detects `HTTPS_PROXY`, uses curl for external requests)
 
-### Analytics & Visualization
-- Total net worth tracking
-- Asset distribution charts
-- Top holdings ranking
-- Historical trend analysis
-- 24h/7d/30d change comparison
+### CLI Dashboard
+- Colorized terminal output with P&L
+- Automatic currency conversion (HKD → USD)
+- Options detection & display (e.g., `TSLA期权`)
+- CJK-aware column alignment
 
-### Tech Stack
-- **Backend**: NestJS + TypeScript + TypeORM + SQLite
-- **Frontend**: Next.js 15 + React 19 + TailwindCSS + Recharts
-- **CLI**: Python (zero dependencies, direct exchange API access)
-- **Futu Service**: Python + Futu OpenD
-- **IBKR Service**: Python + IB Gateway
-- **Process Manager**: PM2 for zero-downtime
-
----
-
-## 📸 Screenshots
-
-*(Add your screenshots here after setup)*
-
----
-
-## 🚀 Quick Start
-
-### 1. Setup API Keys
-
-```bash
-cp config/secrets.example.json config/secrets.json
-# Edit secrets.json with your real API keys
-```
-
-### 2. Install Dependencies
-
-```bash
-# Backend
-cd backend && npm install && npm run build
-
-# Frontend
-cd frontend && npm install
-
-# Futu Service
-cd backend-futu && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
-```
-
-### 3. Start Services
-
-```bash
-# Development mode (3 terminals)
-cd backend-futu && python main.py
-cd backend && npm run start:dev
-cd frontend && npm run dev
-
-# OR Production mode (PM2)
-npm install -g pm2
-pm2 start ecosystem.config.js
-```
-
-### 4. Use It
-
-**GUI** — Open in browser:
-```bash
-open http://localhost:3000/dashboard
-```
-
-**CLI** — Quick terminal check:
-```bash
-# Install (symlink to PATH)
-ln -s $(pwd)/wealthlens /usr/local/bin/wealthlens
-
-# One-shot (auto-detects backend, falls back to direct exchange APIs)
-wealthlens
-
-# Force direct mode (no backend/services needed)
-wealthlens --direct
-
-# Auto-refresh every 60s
-wealthlens --watch
-
-# Custom interval
-wealthlens --watch --interval 30
-```
-
-> **Direct mode**: Connects to OKX, Binance, Bitget APIs directly using keys from `config/secrets.json`. Futu data requires the Futu microservice. No NestJS backend needed.
-
-**Chat via OpenClaw** — Talk to your portfolio:
-
-WealthLens works as an [OpenClaw](https://github.com/openclaw/openclaw) agent backend.
-Once the API server is running, your AI assistant can query portfolio data conversationally:
-
-```
-You:  看板
-Bot:  💰 WealthLens Dashboard
-      总资产 $335,893 (¥2,305,283)
-      ── 股票 ──────────────
-        NVIDIA       $ 37,074  +$42,326
-        ...
-
-You:  我的加密资产有多少？
-Bot:  OKX $36,122 | Binance $7,498 | Bitget $872
-      加密总资产: $44,492
-
-You:  汇率多少？
-Bot:  USD/CNY 6.8582 (来源: currencyapi.com)
-```
-
-No special integration needed — any AI agent that can call HTTP APIs can use WealthLens as a data backend.
-
----
-
-## 📖 Full Documentation
-
-- **[SETUP.md](./SETUP.md)** - Complete setup guide with troubleshooting
-- **[QUICKSTART.md](./QUICKSTART.md)** - Quick reference for common tasks
-- **[AGENT_HANDOFF.md](./AGENT_HANDOFF.md)** - For AI agents to understand the system
-
----
-
-## 🏗️ Architecture
-
+### Architecture
 ```
 ┌──────────┐  ┌──────────┐  ┌──────────┐
 │ Browser  │  │ CLI/TUI  │  │ OpenClaw │
-│ :3000    │  │wealthlens│  │ Telegram │
+│ :3000    │  │ wl / wealthlens │  │ Telegram │
 └────┬─────┘  └────┬─────┘  └────┬─────┘
      │             │              │
      └─────────────┼──────────────┘
@@ -168,48 +54,170 @@ No special integration needed — any AI agent that can call HTTP APIs can use W
      ▼         ▼       ▼          ▼
 ┌─────────┐ ┌──────┐ ┌────────┐ ┌───────┐
 │  Futu   │ │ IBKR │ │ Crypto │ │  FX   │
-│ :8000   │ │ :8001│ │ (ccxt) │ │ Rates │
+│ :8000   │ │ :8001│ │ Direct │ │ Rates │
 └─────────┘ └──────┘ └────────┘ └───────┘
      │         │         │
      ▼         ▼         ▼
-  Futu OpenD  IB GW   OKX/BN/BG
+  Futu OpenD  IB GW   OKX/Binance/Bitget
+              :4001
 ```
 
 ---
 
-## 📊 Data Flow
+## 🚀 Quick Start
 
-1. **Scheduled Collection** (every 6h)
-   - Fetch balances from exchanges
-   - Query on-chain wallet data
-   - Get latest market prices
-   - Calculate total net worth
+### 1. Configure API Keys
 
-2. **Snapshot Creation**
-   - Store timestamped snapshot in SQLite
-   - Run data integrity checks
-   - Fallback to cached data if APIs fail
+```bash
+cp config/secrets.example.json config/secrets.json
+# Edit with your exchange API keys (read-only recommended)
+```
 
-3. **Frontend Display**
-   - Fetch latest snapshot via API
-   - Render charts & tables
-   - Show historical comparisons
+`secrets.json` format:
+```json
+{
+  "okx": { "apiKey": "...", "secret": "...", "password": "..." },
+  "binance": { "apiKey": "...", "secret": "..." },
+  "bitget": { "apiKey": "...", "secret": "...", "password": "..." }
+}
+```
+
+### 2. Install CLI
+
+```bash
+# Symlink to PATH (pick one)
+ln -sf $(pwd)/wealthlens /usr/local/bin/wl
+ln -sf $(pwd)/wealthlens /usr/local/bin/wealthlens
+```
+
+### 3. Use It
+
+```bash
+# One-shot view (auto-detects backend, falls back to direct)
+wl
+
+# Force direct mode (bypasses backend, talks to exchanges directly)
+wl --direct
+
+# Auto-refresh every 60s
+wl --watch
+
+# Custom interval
+wl --watch --interval 30
+```
+
+---
+
+## 📦 Services Setup
+
+### Futu (Port 8000)
+
+Requires [Futu OpenD](https://openapi.futunn.com/) running on port 11111.
+
+```bash
+cd backend-futu
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+python main.py  # Starts on :8000
+```
+
+### IBKR (Port 8001)
+
+Requires [IB Gateway](https://www.interactivebrokers.com/) + [IBC](https://github.com/IbcAlpha/IBC).
+
+```bash
+# 1. Start IB Gateway via IBC
+cd ~/ibc && bash gatewaystartmacos.sh -inline &
+# Wait for port 4001 to be ready
+
+# 2. Start IBKR backend
+cd backend-ibkr
+source venv/bin/activate
+uvicorn main:app --host 127.0.0.1 --port 8001
+```
+
+IBC config (`~/ibc/config.ini`) key settings:
+```ini
+IbLoginId=your_username
+IbPassword=your_password
+TradingMode=live
+OverrideTwsApiPort=4001
+ReadOnlyApi=yes
+```
+
+### NestJS Backend (Port 3001) — Optional
+
+Full backend with snapshots, history, and aggregation:
+
+```bash
+cd backend && npm install && npm run build
+npm run start:dev  # or: pm2 start ecosystem.config.js
+```
+
+### Frontend (Port 3000) — Optional
+
+```bash
+cd frontend && npm install
+npm run dev
+```
+
+---
+
+## 🔄 Data Flow & Fallback
+
+The CLI uses a three-tier fallback strategy:
+
+1. **Backend API** (`:3001`) — Full snapshot with all sources aggregated
+2. **Direct Mode** — Connects to Futu (`:8000`), IBKR (`:8001`), and crypto exchanges directly
+3. **Disk Cache** — Falls back to cached snapshots (10-min TTL) and FX rates (24h TTL)
+
+If any source fails, it's silently skipped — you always get whatever data is available.
+
+### Caching
+
+| Cache | TTL | Location |
+|-------|-----|----------|
+| Snapshot | 10 min | `data/snapshot-cache.json` |
+| FX Rates | 24h (API) / 8h (refresh) | `data/rates-cache.json` |
+
+---
+
+## 📊 Output Example
+
+```
+💰 WealthLens  2026-01-15 10:30  [direct]
+总资产 $125,000 (¥906,250)
+
+── Futu ──────────────────────────────────
+  AAPL       $ 15,000      +$2,100
+  00700      $ 12,500      +$1,800
+  MSFT       $  8,200        +$450
+
+── IBKR ──────────────────────────────────
+  VOO        $  5,000        +$320
+  GOOG       $  3,500        +$180
+
+── 加密 ──────────────────────────────────
+  OKX      $ 10,000  USDT BTC ETH
+  Binance  $  5,000  USDT BNB
+
+── 📊 盈亏 ───────────────────────────────
+  Futu      +$4,350
+  IBKR        +$500
+  总盈亏    +$4,850
+
+  USD/CNY 7.2500 (2.3h ago)
+```
 
 ---
 
 ## 🔐 Security & Privacy
 
-⚠️ **This template has all sensitive data removed:**
-- ✅ No API keys
-- ✅ No wallet addresses
-- ✅ No database with real balances
-- ✅ Git history cleaned
-
-**Before deploying:**
-1. Keep `config/secrets.json` out of Git (already in `.gitignore`)
-2. Use read-only API keys
-3. Run on localhost or secure VPN
-4. Regular database backups
+- ✅ All API keys stored in `config/secrets.json` (git-ignored)
+- ✅ No secrets in source code
+- ✅ Read-only API keys recommended
+- ✅ IB Gateway runs with `ReadOnlyApi=yes`
+- ✅ All data stays local — no external analytics or telemetry
 
 ---
 
@@ -217,35 +225,19 @@ No special integration needed — any AI agent that can call HTTP APIs can use W
 
 ### Add New Exchange
 
-Edit `backend/src/crypto/crypto.service.ts`:
-
-```typescript
-async function getNewExchangeBalances() {
-  const client = new ccxt.newexchange({ apiKey, secret });
-  const balance = await client.fetchBalance();
-  return parseBalances(balance);
-}
+Add a `fetch_xxx(secrets)` function in the CLI that returns:
+```python
+[{"symbol": "BTC", "amount": 0.5, "value_usd": 25000, "price": 50000, "exchange": "NewExchange", "type": "spot"}]
 ```
+
+Then call it in the `main()` direct mode block.
 
 ### Adjust Snapshot Schedule
 
 Edit `backend/src/scheduler/snapshot.scheduler.ts`:
-
 ```typescript
 @Cron('0 */6 * * *')  // Every 6 hours
-async handleSnapshotCron() {
-  // ...
-}
-```
-
-### Custom Charts
-
-Add to `frontend/app/components/`:
-
-```tsx
-export function MyCustomChart({ data }) {
-  return <ResponsiveContainer>...</ResponsiveContainer>;
-}
+async handleSnapshotCron() { ... }
 ```
 
 ---
@@ -254,44 +246,30 @@ export function MyCustomChart({ data }) {
 
 | Issue | Solution |
 |-------|----------|
-| "Cannot connect to Futu" | Make sure Futu OpenD is running on port 11111 |
-| "Invalid API signature" | Check API key format in `secrets.json` |
-| "Empty balances" | Verify API key has "Read" permission |
-| "Database locked" | Stop PM2, delete `.db-wal` file, restart |
-
-See [SETUP.md](./SETUP.md) for detailed troubleshooting.
+| No Futu data | Check Futu OpenD is running (port 11111) and backend-futu on port 8000 |
+| No IBKR data | Start IB Gateway via IBC, wait for port 4001, then start backend-ibkr |
+| "Invalid API signature" | Verify key format in `secrets.json`, check system clock sync |
+| Stale data | Delete `data/snapshot-cache.json`, or use `wl --direct` |
+| Proxy issues | Set `HTTPS_PROXY` env var, CLI auto-detects and uses curl |
 
 ---
 
-## 📝 Contributing
+## 📖 Related Docs
 
-This is a personal project template. Feel free to:
-- Fork and customize for your needs
-- Submit issues for bugs
-- Share improvements via PR
+- **[SETUP.md](./SETUP.md)** — Complete setup guide with troubleshooting
+- **[QUICKSTART.md](./QUICKSTART.md)** — Quick reference for common tasks
+- **[AGENT_HANDOFF.md](./AGENT_HANDOFF.md)** — For AI agents to understand the system
 
 ---
 
 ## 📄 License
 
-MIT License - Free for personal use
+MIT License — Free for personal use.
 
-**Disclaimer:** This tool is for personal wealth tracking only. Always verify critical financial data against official exchange statements. The authors are not responsible for any financial decisions made based on this dashboard.
-
----
-
-## 🙏 Acknowledgments
-
-Built with:
-- [NestJS](https://nestjs.com/) - Progressive Node.js framework
-- [Next.js](https://nextjs.org/) - React framework
-- [Futu OpenAPI](https://openapi.futunn.com/) - Stock market data
-- [CCXT](https://github.com/ccxt/ccxt) - Crypto exchange library
-- [Recharts](https://recharts.org/) - Charting library
-- [TailwindCSS](https://tailwindcss.com/) - Utility-first CSS
+**Disclaimer:** This tool is for personal wealth tracking only. Always verify financial data against official exchange statements.
 
 ---
 
 **Made with ❤️ for personal finance tracking**
 
-*Last updated: 2026-02-28*
+*Last updated: 2026-03-13*
