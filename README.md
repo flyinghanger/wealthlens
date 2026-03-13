@@ -145,6 +145,10 @@ OverrideTwsApiPort=4001
 ReadOnlyApi=yes
 ```
 
+> ⚠️ **Session conflict**: IBKR only allows one active session per username. If you log into IB Gateway with the same username you use on the mobile TWS app, **the mobile session will be kicked off** (and vice versa).
+>
+> **Solution**: Create a second username (sub-account) in IBKR Account Management, and use it exclusively for IB Gateway. This way your mobile TWS and the API gateway can run simultaneously without conflicts.
+
 ### NestJS Backend (Port 3001) — Optional
 
 Full backend with snapshots, history, and aggregation:
