@@ -254,11 +254,57 @@ async handleSnapshotCron() { ... }
 
 ---
 
-## 🤖 OpenClaw Skill
+## 🤖 AI Agent Integration
 
-WealthLens ships with an [OpenClaw](https://github.com/openclaw/openclaw) skill for AI-powered chat integration. Your agent can run the dashboard from Telegram, Discord, or any supported channel.
+WealthLens ships with a skill definition for AI agents. Say `wl` or `看板` in chat and your agent runs the dashboard for you.
 
-See **[skills/SKILL.md](./skills/SKILL.md)** for setup and trigger words.
+Full skill spec: **[skills/SKILL.md](./skills/SKILL.md)**
+
+### OpenClaw
+
+1. Clone or symlink this repo into your agent's skill directory:
+   ```bash
+   # Option A: symlink
+   ln -s /path/to/wealthlens ~/.openclaw/workspace/skills/wealthlens
+
+   # Option B: reference in AGENTS.md
+   echo '- wealthlens skill: /path/to/wealthlens/skills/SKILL.md' >> ~/.openclaw/workspace/AGENTS.md
+   ```
+
+2. Make sure `wl` is on PATH:
+   ```bash
+   ln -sf /path/to/wealthlens/wealthlens /usr/local/bin/wl
+   ```
+
+3. The agent will automatically pick up the skill. Say `wl` or `看板` in any connected channel (Telegram, Discord, etc.) and get your portfolio.
+
+### Claude Code / Codex
+
+Add the skill to your `AGENTS.md` or project instructions:
+
+```markdown
+## Tools
+
+When the user says "wl", "看板", "dashboard", or "wealthlens":
+1. Run `wl` in the terminal
+2. Return the output as a code block
+
+WealthLens CLI reference: see skills/SKILL.md
+```
+
+Or pass it as a system prompt flag:
+```bash
+claude --system "$(cat /path/to/wealthlens/skills/SKILL.md)"
+```
+
+### Other AI Agents (Cursor, Windsurf, etc.)
+
+The skill is a plain Markdown file — drop `skills/SKILL.md` into whatever context/rules/instructions file your agent uses. The key info:
+
+- **Command**: `wl` (or `wl --direct` if no backend)
+- **Trigger words**: `wl`, `看板`, `dashboard`, `wealthlens`
+- **Output**: Terminal text, best rendered in a code block
+- **No dependencies**: Pure Python CLI, zero pip packages
 
 ## 📖 Related Docs
 
